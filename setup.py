@@ -35,11 +35,11 @@ class PactPythonDevelopCommand(develop):
     def run(self):
         """Install ruby command."""
         develop.run(self)
-        bin_path = os.path.join(os.path.dirname(__file__), 'pact', 'bin')
-        if not os.path.exists(bin_path):
-            os.mkdir(bin_path)
+        package_bin_path = os.path.join(os.path.dirname(__file__), 'pact', 'bin')
+        if not os.path.exists(package_bin_path):
+            os.mkdir(package_bin_path)
 
-        install_ruby_app(bin_path)
+        install_ruby_app(package_bin_path, download_bin_path=None)
 
 
 class PactPythonInstallCommand(install):
@@ -48,25 +48,60 @@ class PactPythonInstallCommand(install):
 
     Installs the Python package and unpacks the platform appropriate version
     of the Ruby mock service and provider verifier.
+
+    User Options:
+        --bin-path  An absolute folder path containing predownloaded pact binaries
+                    that should be used instead of fetching from the internet.
     """
+
+    user_options = install.user_options + [('bin-path=', None, None)]
+
+    def initialize_options(self):
+        """Load our preconfigured options"""
+        install.initialize_options(self)
+        self.bin_path = None
+
+    def finalize_options(self):
+        """Load provided CLI arguments into our options"""
+        install.finalize_options(self)
 
     def run(self):
         """Install python binary."""
         install.run(self)
-        bin_path = os.path.join(self.install_lib, 'pact', 'bin')
-        os.mkdir(bin_path)
-        install_ruby_app(bin_path)
+        package_bin_path = os.path.join(self.install_lib, 'pact', 'bin')
+        if not os.path.exists(package_bin_path):
+            os.mkdir(package_bin_path)
+        install_ruby_app(package_bin_path, self.bin_path)
 
 
-def install_ruby_app(bin_path):
+def install_ruby_app(package_bin_path, download_bin_path):
     """
     Download a Ruby application and install it for use.
 
-    :param bin_path: The path where binaries should be installed.
+    :param package_bin_path: The path where we want our pact binaries unarchived.
+    :param download_bin_path: An optional path containing pre-downloaded pact binaries.
+    """
+
+    binary = ruby_app_binary()
+
+    if download_bin_path is not None:
+        path = os.path.join(download_bin_path, binary['filename'])
+        if os.path.isfile(path) is not True:
+            raise RuntimeError('Could not find {} binary.'.format(path))
+        extract_ruby_app_binary(download_bin_path, package_bin_path, binary['filename'])
+    else:
+        download_ruby_app_binary(package_bin_path, binary['suffix'])
+        extract_ruby_app_binary(package_bin_path, package_bin_path, binary['suffix'])
+
+def ruby_app_binary():
+    """
+    Determines the ruby app binary required for this OS.
+
+    :return A dictionary of type {'filename': string, 'version': string, 'suffix': string }
     """
     target_platform = platform.platform().lower()
-    uri = ('https://github.com/pact-foundation/pact-ruby-standalone/releases'
-           '/download/v{version}/pact-{version}-{suffix}')
+
+    binary = ('pact-{version}-{suffix}')
 
     if 'darwin' in target_platform or 'macos' in target_platform:
         suffix = 'osx.tar.gz'
@@ -82,13 +117,26 @@ def install_ruby_app(bin_path):
             platform.platform())
         raise Exception(msg)
 
+    binary = binary.format(version=PACT_STANDALONE_VERSION, suffix=suffix)
+    return {'filename': binary, 'version': PACT_STANDALONE_VERSION, 'suffix': suffix}
+
+def download_ruby_app_binary(path_to_download_to, binary_suffix):
+    """
+    Downloads `binary` into `path_to_download_to`.
+
+    :param path_to_download_to: The path where binaries should be downloaded.
+    :param binary_suffix: The binary suffix that should be installed.
+    """
+    uri = ('https://github.com/pact-foundation/pact-ruby-standalone/releases'
+           '/download/v{version}/pact-{version}-{suffix}')
+
     if sys.version_info.major == 2:
         from urllib import urlopen
     else:
         from urllib.request import urlopen
 
-    path = os.path.join(bin_path, suffix)
-    resp = urlopen(uri.format(version=PACT_STANDALONE_VERSION, suffix=suffix))
+    path = os.path.join(path_to_download_to, binary_suffix)
+    resp = urlopen(uri.format(version=PACT_STANDALONE_VERSION, suffix=binary_suffix))
     with open(path, 'wb') as f:
         if resp.code == 200:
             f.write(resp.read())
@@ -97,12 +145,21 @@ def install_ruby_app(bin_path):
                 'Received HTTP {} when downloading {}'.format(
                     resp.code, resp.url))
 
+def extract_ruby_app_binary(source, destination, binary):
+    """
+    Extracts the ruby app binary from `source` into `destination`.
+
+    :param source: The location of the binary to unarchive.
+    :param destination: The location to unarchive to.
+    :param binary: The binary that needs to be unarchived.
+    """
+    path = os.path.join(source, binary)
     if 'windows' in platform.platform().lower():
         with ZipFile(path) as f:
-            f.extractall(bin_path)
+            f.extractall(destination)
     else:
         with tarfile.open(path) as f:
-            f.extractall(bin_path)
+            f.extractall(destination)
 
 
 def read(filename):
